@@ -11,7 +11,7 @@
 #else
 #define MKLIB_API __declspec(dllimport)
 #endif
-#elif defined(__GNUC__)
+#elif defined(__GNUC__) || defined(__clang__)
 #define MKLIB_API __attribute__((visibility("default")))
 #else
 #define MKLIB_API
@@ -23,6 +23,8 @@ extern "C" {
 
 typedef struct mklib_handle mklib_handle;
 typedef uint64_t mklib_device_id;
+
+#define MKLIB_ABI_VERSION 1u
 
 typedef enum mklib_status {
     MKLIB_OK = 0,
@@ -47,13 +49,31 @@ typedef enum mklib_device_event_type {
     MKLIB_DEVICE_REMOVED = 2
 } mklib_device_event_type;
 
+typedef enum mklib_device_kind {
+    MKLIB_DEVICE_UNKNOWN = 0,
+    MKLIB_DEVICE_KEYBOARD = 1,
+    MKLIB_DEVICE_MOUSE = 2,
+    MKLIB_DEVICE_TOUCHPAD = 3
+} mklib_device_kind;
+
+typedef enum mklib_device_kind_mask {
+    MKLIB_DEVICE_MASK_KEYBOARD = 1u << 0,
+    MKLIB_DEVICE_MASK_MOUSE = 1u << 1,
+    MKLIB_DEVICE_MASK_TOUCHPAD = 1u << 2,
+    MKLIB_DEVICE_MASK_ALL = (1u << 0) | (1u << 1) | (1u << 2)
+} mklib_device_kind_mask;
+
 typedef enum mklib_input_event_type {
     MKLIB_KEY_DOWN = 1,
-    MKLIB_KEY_UP = 2
+    MKLIB_KEY_UP = 2,
+    MKLIB_MOUSE_BUTTON_DOWN = 3,
+    MKLIB_MOUSE_BUTTON_UP = 4,
+    MKLIB_MOUSE_MOVE = 5
 } mklib_input_event_type;
 
 typedef struct mklib_device_info {
     mklib_device_id id;
+    mklib_device_kind kind;
     uint16_t vendor_id;
     uint16_t product_id;
     uint32_t location_id;
@@ -81,13 +101,20 @@ typedef void (*mklib_device_callback)(const mklib_device_info *device,
 typedef void (*mklib_event_callback)(const mklib_event *event, void *user_data);
 
 typedef struct mklib_config {
+    uint32_t struct_size;
+    uint32_t abi_version;
     mklib_device_callback device_callback;
     mklib_event_callback event_callback;
     void *user_data;
     size_t event_queue_capacity;
     bool request_input_access;
+    uint32_t device_kind_mask;
+    uint32_t reserved[4];
 } mklib_config;
 
+MKLIB_API uint32_t mklib_abi_version(void);
+MKLIB_API mklib_status mklib_config_init(mklib_config *config);
+MKLIB_API const char *mklib_platform_name(void);
 MKLIB_API const char *mklib_status_string(mklib_status status);
 MKLIB_API const char *mklib_access_status_string(mklib_access_status status);
 
@@ -107,6 +134,8 @@ MKLIB_API mklib_status mklib_get_devices(const mklib_handle *handle,
 MKLIB_API mklib_status mklib_poll_event(mklib_handle *handle,
                                         mklib_event *out_event,
                                         uint32_t timeout_ms);
+MKLIB_API mklib_status mklib_get_dropped_event_count(const mklib_handle *handle,
+                                                    uint64_t *out_count);
 
 #ifdef __cplusplus
 }

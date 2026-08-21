@@ -5,26 +5,24 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>zh_CN</string>
     <key>CFBundleDisplayName</key>
-    <string>mklib Demo</string>
+    <string>mklib Mouse Demo</string>
     <key>CFBundleExecutable</key>
-    <string>mklib_demo</string>
+    <string>mklib_mouse_demo</string>
     <key>CFBundleIdentifier</key>
-    <string>com.mklib.demo</string>
+    <string>com.mklib.mouse-demo</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>mklib Demo</string>
+    <string>mklib Mouse Demo</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>10.15</string>
+    <string>0.1.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSInputMonitoringUsageDescription</key>
-    <string>mklib Demo 需要读取各个物理键盘的按键来源，以便将不同键盘分配给不同玩家。</string>
+    <string>mklib Mouse Demo 需要读取物理鼠标和触摸板事件，以区分不同玩家。</string>
 </dict>
 </plist>
