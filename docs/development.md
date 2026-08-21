@@ -97,7 +97,7 @@ Xcode、Clang 和 CMake 与语言绑定不是同一个问题。macOS 不要求�
 - 从 `IOHIDDeviceRef` 查询 VID、PID、产品、厂商、序列号、传输方式和 LocationID。
 - 从 `IOHIDElementRef` 查询键盘 Usage Page 和 Usage。
 
-当前实现采用串行 HID 采集队列，回调只做轻量的识别、入队和可选回调。公共 API 通过有容量上限的事件队列支持轮询，避免消费者不及时读取造成无界内存增长。
+当前实现采用串行 HID 采集队列，先完成轻量的识别和入队；用户回调通过独立串行回调队列异步执行，避免用户代码阻塞 HID 采集。公共 API 通过有容量上限的事件队列支持轮询，避免消费者不及时读取造成无界内存增长。
 
 后续性能优化方向：
 
@@ -106,7 +106,67 @@ Xcode、Clang 和 CMake 与语言绑定不是同一个问题。macOS 不要求�
 - 增加事件批量读取接口。
 - 使用基准测试测量设备数、事件速率和回调耗时。
 
-### 4.2 权限
+### 4.2 macOS HID 正确用法与已确认的坑
+
+本项目当前使用 `IOHIDManager` 监听物理键盘。它与 Cocoa 的窗口键盘事件是两条独立链路：
+
+```text
+物理键盘
+├── AppKit / NSEvent / keyDown:       → 当前窗口的焦点事件
+└── IOHIDManager / HID value callback → mklib 的逐设备事件
+```
+
+因此，Cocoa 窗口是否获得焦点不会决定 `IOHIDManager` 是否能收到物理键盘事件。Cocoa `keyDown:` 适合普通窗口输入，但系统通常不会为它提供可靠的物理键盘来源区分；需要区分多台键盘时，必须使用 HID 层。
+
+当前已在真实 macOS 设备上验证的 Manager 调用顺序是：
+
+```text
+创建 IOHIDManager
+→ 设置设备匹配条件
+→ 设置串行 dispatch queue
+→ 注册设备匹配、设备移除和输入值回调
+→ 设置取消处理器
+→ IOHIDManagerOpen
+→ IOHIDManagerActivate
+→ IOHIDManagerCopyDevices 获取当前设备快照
+```
+
+停止时应使用对应的逆向生命周期：
+
+```text
+IOHIDManagerCancel
+→ 等待 HID dispatch queue 中的工作完成
+→ IOHIDManagerClose
+→ 释放 IOHIDManager 和 dispatch queue
+```
+
+关键规则：
+
+- 设备枚举成功不等于输入回调成功；必须分别验证设备数量和实际输入事件。
+- 不要把窗口焦点、Cocoa `NSEvent` 计数和 mklib HID 事件计数混为一谈。
+- 当前输入值匹配不额外限制 Usage Page，由回调读取 `IOHIDElementRef` 的 Usage Page/Usage 后再过滤；过窄的输入匹配字典可能导致设备能枚举但输入回调不触发。
+- 多设备匹配使用 `IOHIDManagerSetDeviceMatchingMultiple`，不能简单把键盘匹配替换成鼠标匹配，否则会丢失已有键盘设备。
+- 当前设备类别优先按产品名中的 `Trackpad`/`Touchpad` 和 Primary Usage 区分：Generic Desktop/Keyboard、Generic Desktop/Mouse、Digitizer/Touch Pad。因为部分 MacBook 内置触控板在 IOKit 中暴露为 `Apple Internal Keyboard / Trackpad` 的 Generic Desktop/Mouse，不能只依赖 Primary Usage；`mklib_device_info.kind` 记录类别，`mklib_config.device_kind_mask` 控制本次句柄需要监听的类别；掩码为 0 时保持旧行为，只监听键盘。
+- 鼠标按钮使用 Button Usage Page，X/Y 移动使用 Generic Desktop 的 X/Y Usage；触控板还可能使用 Digitizer/Tip Switch 表示按压，需要转换为鼠标按钮事件。触摸板只有在 macOS 暴露相对鼠标式 X/Y 报告时才能直接用于本阶段逻辑光标。绝对触摸坐标、多点联系人、手势和系统光标不属于当前 API。
+- `IOHIDDeviceRef` 只作为当前连接的句柄使用，不作为永久设备身份；设备身份应由 VID/PID、LocationID、序列号等元数据组合生成。
+- `Input Monitoring` 是访问底层 HID 输入的授权资格，不是应用之间的独占锁；CodeBuddy 与 mklib Demo 同时获得授权不会互相抢占。
+- 应用可以在前台激活时启动 mklib，在切到其他应用时停止 mklib；这不会取消已经授予的权限，但可以避免程序在后台主动监听。
+- 权限归宿是最终运行的宿主 App，不是静态库文件。开发调试时应固定 `.app` 路径、Bundle ID、签名身份和启动方式；Ad Hoc 重编译可能导致 macOS TCC 重新要求授权。
+- 通过 `open` 或 Finder 启动 App 时，`fprintf(stderr, ...)` 不会回到发起命令的终端；应使用 `log stream`/`log show`，或直接运行 `Contents/MacOS/mklib_demo`。
+- Demo 曾出现“拖动窗口跨屏幕后计数才更新”。根因是事件和状态已经在内存中更新，但绘制代码只调用 `displayIfNeeded`，没有先调用 `setNeedsDisplay:YES`；这是 AppKit 重绘问题，不是 HID 事件延迟。
+
+推荐排错顺序：
+
+```text
+1. 检查 Input Monitoring 权限
+2. 检查 IOHIDManager 是否成功 Open/Activate
+3. 检查当前匹配设备数量
+4. 检查 HID 输入值回调是否收到首个事件
+5. 检查 mklib 事件队列是否能被轮询
+6. 最后检查 Demo 的视图重绘和玩家绑定逻辑
+```
+
+### 4.3 权限
 
 macOS 不需要 root，也不需要为 mklib 安装内核驱动。监听键盘、鼠标等输入设备时，需要用户在系统设置中授予实际运行程序 Input Monitoring 权限：
 
@@ -212,14 +272,33 @@ macOS 的 TCC 权限、Linux 的设备节点权限、Windows 的 Raw Input 注�
 
 ## 8. 多鼠标二期边界
 
-二期只采集多个物理鼠标并将事件带上设备 ID：
+多鼠标开发从 `main` 创建 `feature/multi-mouse` 分支继续，当前第一版只采集多个物理鼠标/触摸板并将事件带上设备 ID：
 
 ```text
-鼠标 A → mklib → 游戏逻辑光标 A
-鼠标 B → mklib → 游戏逻辑光标 B
+鼠标 A ─┐
+鼠标 B ─┼→ mklib → 游戏逻辑光标 A/B
+触摸板 ─┘
 ```
 
 游戏自己绘制多个光标，自己决定每个光标的点击和 UI 规则。系统桌面仍然只有一个光标，不创建虚拟鼠标，不使用 uinput、IOHIDPostEvent 或 Windows 注入接口。
+
+公共 API 新增：
+
+- `mklib_device_kind`：区分键盘、鼠标和触摸板；
+- `mklib_config.device_kind_mask`：选择本次句柄监听的设备类别，0 保持原有键盘默认行为；
+- `MKLIB_MOUSE_BUTTON_DOWN/UP`：鼠标按钮事件；
+- `MKLIB_MOUSE_MOVE`：相对 X/Y 移动事件，轴由 `usage` 表示，增量由 `value` 表示。
+
+`build/mklib_mouse_demo.app` 当前暂时限定为两个独立物理鼠标：用鼠标按钮绑定两个玩家，用 Tab 交换控制，并用相对 X/Y 移动控制两个逻辑小球。当前 MacBook 触摸板虽然可能被系统指针使用，但没有向本项目的 `IOHIDManager` 事件链路提供可用的按钮/移动事件，因此暂不纳入 Demo 控制。库层保留触摸板分类和兼容代码，后续再研究 macOS 专用触控板接口；本阶段不承诺多点触摸、绝对坐标、手势或所有内置触摸板。
+
+Demo 的鼠标捕获行为：
+
+- 第一次有效鼠标按钮绑定后，调用 `CGAssociateMouseAndMouseCursorPosition(false)` 解开物理鼠标与系统光标的关联，并调用 `NSCursor hide` 隐藏光标；
+- HID 鼠标移动继续通过 mklib 控制 Demo 内的逻辑小球；
+- 收到键盘 `Escape` 后，恢复鼠标与系统光标的关联、显示系统光标，并停止处理鼠标移动；
+- 切到后台或 Demo 退出时也会自动恢复系统光标，避免全局鼠标状态残留；
+- 再次按鼠标按钮可以重新捕获。该功能只影响 Demo 的系统光标状态，不创建虚拟鼠标。
+
 
 ## 9. 当前开发进度
 
@@ -229,7 +308,8 @@ macOS 的 TCC 权限、Linux 的设备节点权限、Windows 的 Raw Input 注�
 - 创建稳定 C ABI。
 - 创建 macOS IOHIDManager 后端初版。
 - 支持设备枚举、热插拔、键盘事件和权限状态。
-- 创建 Cocoa 双玩家 Demo。
+- 创建 Cocoa 双玩家键盘 Demo。
+- 在 `feature/multi-mouse` 分支增加键盘、鼠标、触摸板的设备类别匹配和独立 Mouse Demo 初版。
 - 创建基础 API 测试。
 - 固化 README 和本文档。
 
@@ -238,10 +318,52 @@ macOS 的 TCC 权限、Linux 的设备节点权限、Windows 的 Raw Input 注�
 - 在真实 MacBook 内置键盘和蓝牙键盘上验证设备列表与事件来源。
 - 验证不同启动方式下的 Input Monitoring 权限。
 - 增加按键释放状态清理测试。
-- 将用户回调与 HID 采集队列解耦。
+- 将用户回调与 HID 采集队列解耦。（已完成：回调使用独立串行队列。）
 - 增加设备元数据和事件吞吐性能基准。
-- 开始 Windows Raw Input 后端设计。
-- 开始 Linux evdev 后端设计。
+- 开始 Windows Raw Input 后端设计。（已完成目录和统一语义占位，真实采集待实现。）
+- 开始 Linux evdev 后端设计。（已完成目录和统一语义占位，真实采集待实现。）
+- 详细二次开发契约见 `docs/api.md`，跨平台约束见 `docs/platform-backends.md`。
+
+### 9.1 macOS 阶段性验证记录
+
+截至当前阶段，macOS 后端已经在真实设备上验证了以下链路：
+
+```text
+多个物理键盘
+    → IOHIDManager 设备枚举
+    → 带 device_id 的 HID 按键事件
+    → mklib 有界事件队列
+    → Demo 轮询、自动绑定玩家和 Tab 交换
+```
+
+已观察到的结果：
+
+- Demo 能枚举 MacBook 内置键盘、蓝牙键盘和 USB 接收器键盘。
+- 第一次由任意键盘产生的按键可以绑定玩家 1；另一台键盘产生按键后可以绑定玩家 2。
+- 两台键盘绑定后，任意键盘的 Tab 可以交换玩家位置。
+- `mklib` 事件计数能够增加，说明当前 IOHIDManager 采集方案和 Input Monitoring 权限链路是可行的。
+- CodeBuddy 与 Demo 同时出现在 Input Monitoring 列表不会形成输入抢占；该权限不是应用之间的独占锁。
+- Demo 应在前台启动 mklib，在切到其他应用时停止 mklib；Input Monitoring 权限仍是访问底层 HID 事件的资格，不等于程序必须持续后台监听。
+
+已确认的 Demo 显示层问题：
+
+- 事件轮询和状态更新发生在 `NSTimer` 中，但原先只调用 `displayIfNeeded`，没有将视图标记为需要重绘。
+- 因此 mklib 实际已经持续收到事件，计数和玩家状态在内存中更新；拖动窗口、跨屏幕或其他系统操作触发 AppKit 重绘后，积累的状态才一次性显示出来。
+- 这个现象不是 Cocoa 焦点、屏幕切换或 HID 事件延迟，而是 Demo 忘记调用 `setNeedsDisplay` 导致的界面刷新问题。
+- 修复方式是在每次 `tick:` 完成状态更新后，对内容视图调用 `setNeedsDisplay:YES`。这只修复显示刷新，不改变 mklib 采集链路。
+
+诊断时应区分两类计数：
+
+- `mklib 事件`：来自 IOHIDManager 的逐设备事件，验证物理键盘采集是否成功。
+- `Cocoa 焦点事件`：Demo 窗口自己的 AppKit 事件，用于辅助判断窗口焦点；它不是 mklib 的输入来源。当前 Demo 同时统计本地事件监视器和视图事件，因此一次完整的按下/释放可能计数 4 次：本地监视器收到 `keyDown`/`keyUp` 各一次，`DemoView` 的 `keyDown:`/`keyUp:` 又各收到一次。不应将其与 mklib 计数直接比较。
+- `mklib 事件`：当前是 HID value callback 入队次数，不是用户意义上的“按键动作次数”。一次物理操作可能包含按下、释放、HID 报告重复或设备上报的多个值；原始 HID 层也不保证像 AppKit 一样提供文字输入的自动重复。不能用 mklib 事件总数直接实现长按移动。
+- Demo 的长按处理应维护每台已绑定键盘的 WASD 按键状态：收到 `KEY_DOWN` 置位、收到 `KEY_UP` 清位，然后在每个渲染 tick 按状态移动。切到后台停止 mklib 时必须清空按键状态，避免释放事件丢失造成卡键。
+
+启动和日志注意事项：
+
+- 从可执行文件直接运行时，`fprintf(stderr, ...)` 会回到当前终端。
+- 使用 `open` 启动 App 时，标准输出不会回到发出命令的终端；应使用 `log stream`/`log show` 查看统一日志，或直接运行 App 内的可执行文件。
+- macOS TCC 权限与最终 App 的 Bundle 身份、签名和启动上下文有关，开发验证应固定使用同一个 `.app` 路径和启动方式。
 
 ## 10. 验证记录规范
 

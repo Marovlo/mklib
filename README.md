@@ -23,10 +23,10 @@
 - 已实现按物理键盘区分的按键按下和释放事件。
 - 已实现设备元数据：VID、PID、厂商、产品、传输方式、序列号和位置 ID。
 - 已实现输入监控权限查询和请求接口。
-- 已实现稳定 C ABI，便于 C++、C#、Rust、Python 等语言绑定。
+- 已实现 C 风格 opaque handle、extern "C" ABI、ABI 版本和配置结构体版本字段，便于 C++、C#、Rust、Python 等语言绑定；正式发布仍需按版本维护 ABI 兼容性。
 - 已实现无第三方 UI 依赖的 Cocoa 双玩家 Demo。
-- Windows Raw Input 和 Linux evdev 后端暂未实现。
-- 多鼠标属于二期，采用游戏内多个逻辑鼠标，不创建系统级虚拟鼠标。
+- Windows Raw Input 和 Linux evdev 后端尚未实现真实采集；非 macOS 构建现有可编译占位后端并返回 `MKLIB_PLATFORM_UNSUPPORTED`。
+- 多鼠标开发已在 `feature/multi-mouse` 分支开始，采用游戏内多个逻辑鼠标，不创建系统级虚拟鼠标。
 
 ## 构建
 
@@ -46,6 +46,7 @@ Demo 位于：
 
 ```text
 build/mklib_demo.app
+build/mklib_mouse_demo.app
 ```
 
 建议直接启动 App，而不是长期从命令行启动：
@@ -64,13 +65,25 @@ open build/mklib_demo.app
 
 Demo 中：
 
-- 按 `1`：将产生该按键的物理键盘绑定给玩家 1。
-- 按 `2`：将产生该按键的物理键盘绑定给玩家 2。
-- 按 `Tab`：交换两个玩家的键盘绑定。
+- 第一次按下任意键：将产生该按键的物理键盘绑定给玩家 1。
+- 之后由另一台键盘第一次按下任意键：将该物理键盘绑定给玩家 2。
+- 两台键盘都绑定后，按 `Tab`：交换两个玩家的键盘绑定。
 - 玩家 1 和玩家 2 都使用各自键盘上的 `WASD` 移动对应对象。
 - 页面上会显示当前发现的键盘、设备 ID、厂商、传输方式和 VID/PID。
 
 设备 ID 只保证当前连接期间有效。键盘断开后重新连接，可能得到新的 ID；如果两个键盘型号完全相同且没有序列号，Demo 使用按键绑定来消除识别歧义。
+
+### 多鼠标 Demo
+
+多鼠标开发分支新增了 `build/mklib_mouse_demo.app`：
+
+- 库仍能枚举键盘、鼠标和 HID 触摸板，但当前 Demo 暂时只接收键盘和两个独立鼠标；
+- 第一次按下鼠标按钮绑定玩家 1，另一台鼠标按下按钮后绑定玩家 2；
+- 任意键盘按 `Tab` 交换两个玩家的鼠标控制；
+- 鼠标移动控制对应小球；
+- 鼠标完成绑定后隐藏并解关联系统光标，按 `Esc` 恢复系统光标并停止小球控制；再次按鼠标按钮可以重新捕获。
+
+当前 MacBook 触摸板在本机没有产生可供 mklib 使用的 HID 按钮/移动事件，因此暂不作为 Mouse Demo 的控制设备。库层保留触摸板分类和事件兼容代码，后续再单独研究 macOS 专用触控板接口；本阶段不实现多点触摸、手势和系统级多光标。
 
 ## 最小接入示例
 
@@ -79,6 +92,9 @@ Demo 中：
 
 mklib_handle *input = nullptr;
 mklib_config config{};
+if (mklib_config_init(&config) != MKLIB_OK) {
+    return false;
+}
 config.event_queue_capacity = 4096;
 
 if (mklib_create(&config, &input) != MKLIB_OK) {
@@ -160,8 +176,29 @@ include/mklib/mklib.h    公共 C ABI
 src/mklib.cpp             macOS IOHIDManager 后端
 demo/main.mm              Cocoa 双玩家 Demo
 tests/test_api.cpp        基础 API 测试
-docs/development.md      调研与开发文档
-CMakeLists.txt            构建配置
+docs/api.md              二次开发 API、生命周期和线程契约
+ docs/platform-backends.md 跨平台后端开发约定
+ docs/development.md      调研与开发文档
+CMakeLists.txt            构建配置与安装包
+```
+
+## 二次开发与安装
+
+详细接入契约见 [`docs/api.md`](docs/api.md)，Windows/Linux 后端目录和实现约束见 [`docs/platform-backends.md`](docs/platform-backends.md)。
+
+构建共享库并安装 CMake package：
+
+```bash
+cmake -S . -B build -DMKLIB_BUILD_SHARED=ON -DMKLIB_BUILD_DEMO=OFF
+cmake --build build
+cmake --install build --prefix "$PWD/install"
+```
+
+下游 CMake 项目可以使用：
+
+```cmake
+find_package(mklib CONFIG REQUIRED)
+target_link_libraries(game PRIVATE mklib::mklib)
 ```
 
 ## 许可证
