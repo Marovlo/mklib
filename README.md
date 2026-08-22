@@ -24,8 +24,8 @@
 - 已实现设备元数据：VID、PID、厂商、产品、传输方式、序列号和位置 ID。
 - 已实现输入监控权限查询和请求接口。
 - 已实现 C 风格 opaque handle、extern "C" ABI、ABI 版本和配置结构体版本字段，便于 C++、C#、Rust、Python 等语言绑定；正式发布仍需按版本维护 ABI 兼容性。
-- 已实现无第三方 UI 依赖的 Cocoa 双玩家 Demo。
-- 已实现 `mkflappybird` 双区域键盘+鼠标 Flappy Bird Demo。
+- 已实现无第三方 UI 依赖的 macOS Cocoa 双玩家、多鼠标和 Flappy Bird Demo。
+- 已实现无第三方 UI 依赖的 Windows Win32 双键盘、多鼠标和 Flappy Bird Demo；Windows GUI 使用双缓冲，Flappy Bird 复用 macOS 资源。
 - 已实现 Windows Raw Input 键盘/鼠标、设备热插拔、消息转发和显式窗口注册模式；Linux 仍返回 `MKLIB_PLATFORM_UNSUPPORTED`。
 - 多鼠标开发已在 `feature/multi-mouse` 分支开始，采用游戏内多个逻辑鼠标，不创建系统级虚拟鼠标。
 
@@ -43,15 +43,28 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-Demo 位于：
+Demo 位于 macOS 构建目录的 App Bundle 中；Windows 构建目录的 Debug/Release 子目录中：
 
 ```text
-build/mklib_demo.app
-build/mklib_mouse_demo.app
-build/mkflappybird.app
+macOS:  build/mklib_demo.app
+        build/mklib_mouse_demo.app
+        build/mkflappybird.app
+Windows: build/mklib_demo.exe
+         build/mklib_mouse_demo.exe
+         build/mkflappybird.exe
 ```
 
-建议直接启动 App，而不是长期从命令行启动：
+Windows 构建示例：
+
+```powershell
+cmake -S . -B build-win -G "Visual Studio 17 2022" -A x64 -DMKLIB_BUILD_DEMO=ON -DMKLIB_BUILD_MOUSE_DEMO=ON -DMKLIB_BUILD_FLAPPYBIRD_DEMO=ON -DMKLIB_BUILD_TESTS=ON
+cmake --build build-win --config Debug
+ctest --test-dir build-win -C Debug --output-on-failure
+```
+
+Windows Demo 的核心操作与 macOS 版本一致：双键盘 Demo 使用首次按键绑定和 WASD 移动；多鼠标 Demo 使用鼠标按钮绑定、相对移动和 Tab/Esc；Flappy Bird 使用 Enter 进入绑定、键盘 1/2 和鼠标左右键分配区域，进入游戏后用 Space 飞行、对应鼠标按键发射子弹，包含管道、礼物、碰撞、计分和结束状态。Windows Flappy Bird 构建时会自动从 `demo/macos/mkflappybird/assets` 复制 `sky_background.png`、`bird_up.png`、`bird_down.png`、`bullet.png` 和 `gift.png` 到输出目录的 `assets` 子目录。Windows Demo 不注入系统输入，也不移动系统光标。
+
+macOS 建议直接启动 App，而不是长期从命令行启动：
 
 ```bash
 open build/mklib_demo.app
@@ -79,7 +92,7 @@ Demo 中：
 
 ### mkflappybird Demo
 
-`build/mkflappybird.app` 是双区域键盘+鼠标 Flappy Bird Demo：
+`mkflappybird` 是双区域键盘+鼠标 Flappy Bird Demo；macOS 位于 `build/mkflappybird.app`，Windows 位于 `build-win/Debug/mkflappybird.exe`：
 
 - 启动后进入主页，固定左右两个区域，按 `Enter` 进入绑定；
 - 左区域：一台键盘按数字键 `1` 绑定，再用一只鼠标按左键绑定；
@@ -93,13 +106,13 @@ Demo 中：
 
 ### 多鼠标 Demo
 
-多鼠标开发分支新增了 `build/mklib_mouse_demo.app`：
+多鼠标 Demo 位于 macOS 的 `build/mklib_mouse_demo.app` 或 Windows 的 `build-win/Debug/mklib_mouse_demo.exe`：
 
 - 库仍能枚举键盘、鼠标和 HID 触摸板，但当前 Demo 暂时只接收键盘和两个独立鼠标；
 - 第一次按下鼠标按钮绑定玩家 1，另一台鼠标按下按钮后绑定玩家 2；
 - 任意键盘按 `Tab` 交换两个玩家的鼠标控制；
 - 鼠标移动控制对应小球；
-- 鼠标完成绑定后隐藏并解关联系统光标，按 `Esc` 恢复系统光标并停止小球控制；再次按鼠标按钮可以重新捕获。
+- macOS Demo 在完成绑定后隐藏并解关联系统光标，按 `Esc` 恢复系统光标并停止小球控制；Windows Demo 使用逻辑捕获，不移动系统光标，按 `Esc` 关闭逻辑捕获，再次按鼠标按钮可以重新捕获。
 
 当前 MacBook 触摸板在本机没有产生可供 mklib 使用的 HID 按钮/移动事件，因此暂不作为 Mouse Demo 的控制设备。库层保留触摸板分类和事件兼容代码，后续再单独研究 macOS 专用触控板接口；本阶段不实现多点触摸、手势和系统级多光标。
 
@@ -139,7 +152,7 @@ mklib_destroy(&input);
 ## 设计原则
 
 - 核心采集层不依赖 SDL3。
-- Demo 可以使用 SDL3 或原生 Cocoa；当前 Demo 使用 Cocoa，减少依赖并明确展示 mklib 的事件来源。
+- Demo 可以使用 SDL3 或平台原生 UI；当前 macOS Demo 使用 Cocoa，Windows Demo 使用 Win32/GDI+，减少依赖并明确展示 mklib 的事件来源。
 - 对外暴露稳定 C ABI，内部实现可以使用 C++ 和平台原生 API。
 - 每个物理设备有独立 ID、元数据和事件来源。
 - 回调和轮询两种消费方式都支持。
@@ -204,6 +217,10 @@ demo/macos/mklib_mouse_demo/MouseInfo.plist            多鼠标 Bundle 配置
 demo/macos/mkflappybird/main.mm                        Cocoa 双区域键盘+鼠标 Flappy Bird Demo
 demo/macos/mkflappybird/Info.plist                     Flappy Bird Bundle 配置
 demo/macos/mkflappybird/assets/sky_background.png      Flappy Bird 背景素材
+demo/windows/demo_common.h                              Win32 Demo 双缓冲窗口基础层
+demo/windows/mklib_demo.cpp                             Windows 双键盘 Demo
+demo/windows/mklib_mouse_demo.cpp                       Windows 多鼠标 Demo
+demo/windows/mkflappybird.cpp                           Windows 双区域键盘+鼠标 Flappy Bird Demo
 tests/test_api.cpp                                      公共 API 测试
 tests/test_windows_normalizer.cpp                      Windows 规范化测试
 docs/api.md                                             二次开发 API、生命周期和线程契约

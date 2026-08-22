@@ -16,7 +16,7 @@ CMake 根据目标平台选择后端：
 - macOS 选择 `src/platform/macos/macos_backend.cpp`；
 - Windows 选择 `src/platform/windows/raw_input_backend.cpp` 和 `src/platform/windows/raw_input_normalizer.cpp`；
 - 其他平台选择 `src/platform/unsupported/unsupported_backend.cpp`，公共 API 可以编译和链接，但采集接口返回 `MKLIB_PLATFORM_UNSUPPORTED`；
-- Demo 只在 macOS 构建；库和基础测试可以在 Windows/Linux 先完成编译验证。
+- macOS 构建 Cocoa Demo；Windows 构建原生 Win32 Demo；Linux 当前只构建库和基础测试。
 
 这种布局让平台代码不会泄漏到公共头文件，也避免在各平台开发阶段使用大量 `#ifdef` 改写业务层。
 

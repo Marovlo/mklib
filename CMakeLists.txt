@@ -17,9 +17,9 @@ endif()
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 option(MKLIB_BUILD_SHARED "Build mklib as a shared library" OFF)
-option(MKLIB_BUILD_DEMO "Build the macOS keyboard Cocoa demo" ON)
-option(MKLIB_BUILD_MOUSE_DEMO "Build the macOS multi-mouse Cocoa demo" ON)
-option(MKLIB_BUILD_FLAPPYBIRD_DEMO "Build the macOS multi-keyboard Flappy Bird demo" ON)
+option(MKLIB_BUILD_DEMO "Build the keyboard demo" ON)
+option(MKLIB_BUILD_MOUSE_DEMO "Build the multi-mouse demo" ON)
+option(MKLIB_BUILD_FLAPPYBIRD_DEMO "Build the multi-keyboard Flappy Bird demo" ON)
 option(MKLIB_BUILD_TESTS "Build the mklib tests" ON)
 set(MKLIB_CODESIGN_IDENTITY "" CACHE STRING "Code signing identity for the macOS demo")
 
@@ -66,28 +66,17 @@ elseif(WIN32)
 endif()
 
 if(APPLE AND MKLIB_BUILD_DEMO)
-    add_executable(mklib_demo MACOSX_BUNDLE
-        demo/macos/mklib_demo/main.mm
-    )
+    add_executable(mklib_demo MACOSX_BUNDLE demo/macos/mklib_demo/main.mm)
     target_include_directories(mklib_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_compile_options(mklib_demo PRIVATE -Wall -Wextra -Wpedantic -fobjc-arc)
-    target_link_libraries(mklib_demo PRIVATE
-        mklib::mklib
-        "-framework Cocoa"
-    )
-    set_target_properties(mklib_demo PROPERTIES
-        MACOSX_BUNDLE_GUI_IDENTIFIER "com.mklib.demo"
-        MACOSX_BUNDLE_BUNDLE_NAME "mklib Demo"
-        MACOSX_BUNDLE_BUNDLE_VERSION "0.1.0"
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "0.1.0"
-        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/demo/macos/mklib_demo/Info.plist"
-    )
-    if(MKLIB_CODESIGN_IDENTITY)
-        add_custom_command(TARGET mklib_demo POST_BUILD
-            COMMAND codesign --force --deep --sign "${MKLIB_CODESIGN_IDENTITY}"
-                    "$<TARGET_BUNDLE_DIR:mklib_demo>"
-        )
-    endif()
+    target_link_libraries(mklib_demo PRIVATE mklib::mklib "-framework Cocoa")
+    set_target_properties(mklib_demo PROPERTIES MACOSX_BUNDLE_GUI_IDENTIFIER "com.mklib.demo" MACOSX_BUNDLE_BUNDLE_NAME "mklib Demo" MACOSX_BUNDLE_BUNDLE_VERSION "0.1.0" MACOSX_BUNDLE_SHORT_VERSION_STRING "0.1.0" MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/demo/macos/mklib_demo/Info.plist")
+elseif(WIN32 AND MKLIB_BUILD_DEMO)
+    add_executable(mklib_demo WIN32 demo/windows/mklib_demo.cpp)
+    target_include_directories(mklib_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/demo/windows)
+    target_compile_definitions(mklib_demo PRIVATE UNICODE _UNICODE)
+    target_compile_options(mklib_demo PRIVATE /utf-8)
+    target_link_libraries(mklib_demo PRIVATE mklib::mklib)
 endif()
 
 if(APPLE AND MKLIB_BUILD_FLAPPYBIRD_DEMO)
@@ -125,6 +114,18 @@ if(APPLE AND MKLIB_BUILD_FLAPPYBIRD_DEMO)
                     "$<TARGET_BUNDLE_DIR:mkflappybird>"
         )
     endif()
+elseif(WIN32 AND MKLIB_BUILD_FLAPPYBIRD_DEMO)
+    add_executable(mkflappybird WIN32 demo/windows/mkflappybird.cpp)
+    target_include_directories(mkflappybird PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/demo/windows)
+    target_compile_definitions(mkflappybird PRIVATE UNICODE _UNICODE)
+    target_compile_options(mkflappybird PRIVATE /utf-8)
+    target_link_libraries(mkflappybird PRIVATE mklib::mklib)
+    add_custom_command(TARGET mkflappybird POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:mkflappybird>/assets"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/demo/macos/mkflappybird/assets"
+                "$<TARGET_FILE_DIR:mkflappybird>/assets"
+    )
 endif()
 
 if(APPLE AND MKLIB_BUILD_MOUSE_DEMO)
@@ -151,6 +152,12 @@ if(APPLE AND MKLIB_BUILD_MOUSE_DEMO)
                     "$<TARGET_BUNDLE_DIR:mklib_mouse_demo>"
         )
     endif()
+elseif(WIN32 AND MKLIB_BUILD_MOUSE_DEMO)
+    add_executable(mklib_mouse_demo WIN32 demo/windows/mklib_mouse_demo.cpp)
+    target_include_directories(mklib_mouse_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/demo/windows)
+    target_compile_definitions(mklib_mouse_demo PRIVATE UNICODE _UNICODE)
+    target_compile_options(mklib_mouse_demo PRIVATE /utf-8)
+    target_link_libraries(mklib_mouse_demo PRIVATE mklib::mklib)
 endif()
 
 if(MKLIB_BUILD_TESTS)

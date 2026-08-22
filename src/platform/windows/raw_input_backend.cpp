@@ -22,7 +22,7 @@
 #include <utility>
 #include <vector>
 
-namespace {
+namespace mklib_windows_detail {
 
 constexpr size_t kDefaultQueueCapacity = 4096;
 constexpr uint16_t kGenericDesktopUsagePage = 0x01;
@@ -69,16 +69,6 @@ struct mklib_handle_impl {
     std::thread::id callback_thread_id;
 };
 
-struct mklib_handle : mklib_handle_impl {};
-
-mklib_handle_impl *impl(mklib_handle *handle) {
-    return reinterpret_cast<mklib_handle_impl *>(handle);
-}
-
-const mklib_handle_impl *impl(const mklib_handle *handle) {
-    return reinterpret_cast<const mklib_handle_impl *>(handle);
-}
-
 uint32_t device_kind_bit(mklib_device_kind kind) {
     switch (kind) {
         case MKLIB_DEVICE_KEYBOARD: return MKLIB_DEVICE_MASK_KEYBOARD;
@@ -120,7 +110,7 @@ void copy_string(const std::string &value, char *destination, size_t capacity) {
     if (destination == nullptr || capacity == 0) {
         return;
     }
-    const size_t length = std::min(value.size(), capacity - 1);
+    const size_t length = (std::min)(value.size(), capacity - 1);
     std::memcpy(destination, value.data(), length);
     destination[length] = '\0';
 }
@@ -194,14 +184,14 @@ std::wstring setup_property(HDEVINFO device_info_set, SP_DEVINFO_DATA *device_in
     DWORD type = 0;
     DWORD size = 0;
     SetupDiGetDeviceRegistryPropertyW(device_info_set, device_info, property, &type,
-                                      nullptr, 0, &size, nullptr);
+                                      nullptr, 0, &size);
     if (size == 0 || (type != REG_SZ && type != REG_EXPAND_SZ)) {
         return {};
     }
     std::vector<BYTE> buffer(size + sizeof(wchar_t), 0);
     if (!SetupDiGetDeviceRegistryPropertyW(device_info_set, device_info, property, &type,
                                            buffer.data(), static_cast<DWORD>(buffer.size()),
-                                           &size, nullptr)) {
+                                           &size)) {
         return {};
     }
     return std::wstring(reinterpret_cast<wchar_t *>(buffer.data()));
@@ -543,7 +533,7 @@ bool process_raw_input(mklib_handle_impl *state, HRAWINPUT raw_handle) {
                         sizeof(RAWINPUTHEADER)) == UINT(-1)) {
         return false;
     }
-    return process_raw_input(state, reinterpret_cast<const RAWINPUT *>(buffer.data()));
+    return process_raw_input_buffer(state, reinterpret_cast<const RAWINPUT *>(buffer.data()));
 }
 
 bool register_raw_input(mklib_handle_impl *state) {
@@ -631,7 +621,21 @@ void clear_device_state(mklib_handle_impl *state) {
     }
 }
 
-}  // namespace
+}  // namespace mklib_windows_detail
+
+struct mklib_handle : mklib_windows_detail::mklib_handle_impl {};
+
+namespace mklib_windows_detail {
+mklib_handle_impl *impl(::mklib_handle *handle) {
+    return reinterpret_cast<mklib_handle_impl *>(handle);
+}
+
+const mklib_handle_impl *impl(const ::mklib_handle *handle) {
+    return reinterpret_cast<const mklib_handle_impl *>(handle);
+}
+}
+
+using namespace mklib_windows_detail;
 
 extern "C" {
 
@@ -707,7 +711,7 @@ mklib_status mklib_create(const mklib_config *config, mklib_handle **out_handle)
         }
         const size_t copy_size = config->struct_size == 0
             ? sizeof(mklib_config)
-            : std::min(static_cast<size_t>(config->struct_size), sizeof(mklib_config));
+            : (std::min)(static_cast<size_t>(config->struct_size), sizeof(mklib_config));
         std::memcpy(&state->config, config, copy_size);
         state->config.struct_size = sizeof(mklib_config);
         state->config.abi_version = MKLIB_ABI_VERSION;
@@ -795,7 +799,7 @@ mklib_status mklib_get_devices(const mklib_handle *handle, mklib_device_info *de
     const auto *state = impl(handle);
     std::lock_guard<std::mutex> lock(state->mutex);
     *out_count = state->devices.size();
-    const size_t copied = std::min(capacity, *out_count);
+    const size_t copied = (std::min)(capacity, *out_count);
     size_t index = 0;
     for (const auto &entry : state->devices) {
         if (index >= copied) {
