@@ -2,7 +2,7 @@
 
 ## 1. 适用范围
 
-`mklib` 为游戏或本地多人应用提供按物理设备区分的输入事件。当前已实现 macOS 后端；Windows 和 Linux 已提供可编译的后端占位，尚未提供真实输入采集。
+`mklib` 为游戏或本地多人应用提供按物理设备区分的输入事件。当前已实现 macOS 和 Windows Raw Input 后端；Linux 仍为可编译占位后端。
 
 库不负责：
 
@@ -72,6 +72,25 @@ config.device_kind_mask = MKLIB_DEVICE_MASK_KEYBOARD |
 | `request_input_access` | 启动时请求平台输入权限 |
 | `device_kind_mask` | 设备类别掩码；0 保持默认，只监听键盘 |
 
+### 3.1 Windows 窗口消息接入
+
+Windows 的窗口接入 API 与其他公共 API 一样位于 `include/mklib/mklib.h`，不改变 `mklib_config` 布局和现有 ABI 版本。库不会创建隐藏窗口、子类化窗口或自动接管宿主的窗口过程。
+
+宿主必须在创建窗口后、`mklib_start` 前调用 `mklib_windows_attach_window`，传入窗口句柄的整数值（`HWND` 转为 `uintptr_t`）。如果宿主已经注册 Raw Input，传入 flags 为 0；宿主窗口过程收到消息后调用：
+
+```cpp
+bool handled = false;
+mklib_windows_process_message(
+    handle, static_cast<uint32_t>(message),
+    static_cast<uintptr_t>(wparam), static_cast<intptr_t>(lparam), &handled);
+```
+
+宿主仍拥有窗口消息的最终处理权。对 `WM_INPUT`，调用库处理后仍应按宿主窗口框架要求调用 `DefWindowProc`；库只读取消息并生成 mklib 事件，不注入或修改系统输入。对 `WM_INPUT_DEVICE_CHANGE` 也应转发消息，以获得加入/移除通知。窗口过程不要在 `mklib` 回调中停止或销毁句柄。
+
+如果宿主没有自己的 Raw Input 注册，可以显式使用 `MKLIB_WINDOWS_ATTACH_REGISTER_RAW_INPUT`（可与 `MKLIB_WINDOWS_ATTACH_INPUT_SINK` 组合）让库为该窗口调用 `RegisterRawInputDevices`。这是一次明确的所有权选择，不会在 `start` 时无条件覆盖宿主注册。库停止时只撤销自己注册的类别；宿主自有注册应由宿主负责。若引擎已经占用键盘或鼠标类别，必须使用 flags 为 0 的转发模式，不能再次注册同一类别。
+
+窗口必须在 `detach` 或 `stop` 前保持有效；窗口销毁后不得再转发消息。失焦时转发 `WM_KILLFOCUS`/`WM_ACTIVATEAPP`，或者由宿主调用 `mklib_windows_reset_input_state`，库会清空各设备的内部按下集合，不伪造释放消息。设备移除和 `stop` 也会清空对应状态。
+
 ## 4. 设备与身份
 
 `mklib_get_devices` 获取当前句柄已监听的设备：
@@ -88,8 +107,8 @@ mklib_get_devices(handle, devices, 64, &device_count);
 
 字段含义：
 
-- `id`：当前 `mklib` 运行期间的临时 ID；
-- `persistent_id`：由平台元数据组合的尽可能稳定的身份，用于重连恢复；不保证在没有序列号的同型号设备之间唯一；
+- `id`：当前 `mklib` 运行期间的临时 ID；Windows 上由 `RAWINPUTHEADER.hDevice` 映射而来，`hDevice` 只作当前连接句柄；
+- `persistent_id`：由平台元数据组合的尽可能稳定的身份，用于重连恢复；Windows 上优先包含 Raw Input 设备路径、VID/PID 以及 SetupAPI 可取得的厂商/产品信息，不保证在没有序列号的同型号设备之间唯一；
 - `kind`：键盘、鼠标、触控板或未知类别；
 - `vendor_id`、`product_id`、`location_id`：平台设备元数据；
 - 字符串字段：始终保证以 `\\0` 结尾，内容可能为空；
@@ -167,7 +186,7 @@ while (mklib_poll_event(handle, &event, 16) == MKLIB_OK) {
 ## 9. 平台权限
 
 - macOS：最终宿主 App 需要 Input Monitoring 权限；权限属于 App，不属于静态库文件；
-- Windows：计划使用 Raw Input，通常不要求管理员权限，但需要与宿主窗口的 `WM_INPUT` 注册协商；
+- Windows：Raw Input 通常不要求管理员权限；宿主必须负责窗口句柄生命周期、`WM_INPUT`/`WM_INPUT_DEVICE_CHANGE` 转发和是否调用 `RegisterRawInputDevices` 的选择。Raw Input 注册按进程和设备类别受窗口归属约束，库不会无条件覆盖引擎注册；访问受限桌面、远程会话或设备驱动限制可能导致设备不可用。Windows 没有与 macOS Input Monitoring 等价的 mklib 权限请求流程，`mklib_input_access_status` 返回适用状态。
 - Linux：计划使用 evdev，进程需要输入设备节点的读取权限，部署优先采用活动会话 ACL 或受控 udev 规则，不建议长期使用 root。
 
 ## 10. 接入建议

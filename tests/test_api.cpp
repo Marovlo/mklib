@@ -1,4 +1,7 @@
 #include "mklib/mklib.h"
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 
 #include <cassert>
 #include <cstring>
@@ -15,12 +18,22 @@ int main() {
     config.event_queue_capacity = 8;
 
     mklib_handle *handle = nullptr;
-    if (std::strcmp(mklib_platform_name(), "macOS") != 0) {
+    const char *platform = mklib_platform_name();
+    if (std::strcmp(platform, "macOS") != 0 && std::strcmp(platform, "Windows") != 0) {
         assert(mklib_create(&config, &handle) == MKLIB_PLATFORM_UNSUPPORTED);
         assert(handle == nullptr);
         return 0;
     }
     assert(mklib_create(&config, &handle) == MKLIB_OK);
+#if defined(_WIN32)
+    assert(mklib_input_access_status() == MKLIB_ACCESS_NOT_APPLICABLE);
+    assert(mklib_windows_attach_window(handle, 0, 0) == MKLIB_INVALID_ARGUMENT);
+    assert(mklib_start(handle) == MKLIB_OK);
+    bool handled = false;
+    assert(mklib_windows_process_message(handle, WM_KILLFOCUS, 0, 0, &handled) == MKLIB_OK);
+    assert(handled);
+    assert(mklib_stop(handle) == MKLIB_OK);
+#endif
     assert(handle != nullptr);
 
     size_t count = 99;

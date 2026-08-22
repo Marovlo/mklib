@@ -21,12 +21,16 @@
 #include <string>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace {
 
 constexpr size_t kDefaultQueueCapacity = 4096;
 constexpr uint16_t kKeyboardUsagePage = kHIDPage_KeyboardOrKeypad;
+constexpr uint16_t kKeyboardApplicationUsage = 0x06;
+constexpr uint16_t kAppleInternalKeyboardUsagePage = 0xff00;
+constexpr uint16_t kAppleInternalKeyboardUsage = 95;
 constexpr uint16_t kGenericDesktopUsagePage = kHIDPage_GenericDesktop;
 constexpr uint16_t kButtonUsagePage = kHIDPage_Button;
 char kCallbackQueueKey;
@@ -42,8 +46,9 @@ uint32_t device_kind_bit(mklib_device_kind kind) {
 }
 
 struct DeviceRecord {
-    IOHIDDeviceRef device = nullptr;
     mklib_device_info info{};
+    std::unordered_set<IOHIDDeviceRef> aliases;
+    std::string physical_key;
 };
 
 struct mklib_handle_impl {
@@ -55,7 +60,9 @@ struct mklib_handle_impl {
     mutable std::mutex mutex;
     std::condition_variable event_condition;
     std::deque<mklib_event> events;
-    std::unordered_map<IOHIDDeviceRef, DeviceRecord> devices;
+    std::unordered_map<mklib_device_id, DeviceRecord> devices;
+    std::unordered_map<IOHIDDeviceRef, mklib_device_id> device_ids;
+    std::unordered_map<std::string, mklib_device_id> physical_device_ids;
     uint64_t dropped_event_count = 0;
     uint64_t next_device_id = 1;
     size_t queue_capacity = kDefaultQueueCapacity;
@@ -108,15 +115,10 @@ mklib_device_kind classify_device(IOHIDDeviceRef device) {
         IOHIDDeviceGetProperty(device, CFSTR(kIOHIDPrimaryUsagePageKey)));
     const uint32_t usage = copy_number<uint32_t>(
         IOHIDDeviceGetProperty(device, CFSTR(kIOHIDPrimaryUsageKey)));
-    CFTypeRef product_value = IOHIDDeviceGetProperty(device, CFSTR(kIOHIDProductKey));
-    if (product_value != nullptr && CFGetTypeID(product_value) == CFStringGetTypeID()) {
-        CFStringRef product = static_cast<CFStringRef>(product_value);
-        if (CFStringFind(product, CFSTR("Trackpad"), 0).location != kCFNotFound ||
-            CFStringFind(product, CFSTR("Touchpad"), 0).location != kCFNotFound) {
-            return MKLIB_DEVICE_TOUCHPAD;
-        }
-    }
-    if (usage_page == kHIDPage_GenericDesktop && usage == kHIDUsage_GD_Keyboard) {
+    if ((usage_page == kHIDPage_GenericDesktop && usage == kHIDUsage_GD_Keyboard) ||
+        (usage_page == kKeyboardUsagePage && usage == kKeyboardApplicationUsage) ||
+        (usage_page == kAppleInternalKeyboardUsagePage &&
+         usage == kAppleInternalKeyboardUsage)) {
         return MKLIB_DEVICE_KEYBOARD;
     }
     if (usage_page == kHIDPage_GenericDesktop && usage == kHIDUsage_GD_Mouse) {
@@ -124,6 +126,14 @@ mklib_device_kind classify_device(IOHIDDeviceRef device) {
     }
     if (usage_page == kHIDPage_Digitizer && usage == kHIDUsage_Dig_TouchPad) {
         return MKLIB_DEVICE_TOUCHPAD;
+    }
+    CFTypeRef product_value = IOHIDDeviceGetProperty(device, CFSTR(kIOHIDProductKey));
+    if (product_value != nullptr && CFGetTypeID(product_value) == CFStringGetTypeID()) {
+        CFStringRef product = static_cast<CFStringRef>(product_value);
+        if (CFStringFind(product, CFSTR("Trackpad"), 0).location != kCFNotFound ||
+            CFStringFind(product, CFSTR("Touchpad"), 0).location != kCFNotFound) {
+            return MKLIB_DEVICE_TOUCHPAD;
+        }
     }
     return MKLIB_DEVICE_UNKNOWN;
 }
@@ -171,6 +181,14 @@ mklib_device_info make_device_info(IOHIDDeviceRef device, mklib_device_id id,
     return info;
 }
 
+std::string physical_device_key(IOHIDDeviceRef device, mklib_device_kind kind) {
+    const mklib_device_info info = make_device_info(device, 0, kind);
+    return std::string(info.manufacturer) + "|" + info.product + "|" +
+           info.serial_number + "|" + info.transport + "|" +
+           std::to_string(info.location_id) + "|" +
+           std::to_string(static_cast<int>(kind));
+}
+
 void emit_device_callback(mklib_handle_impl *state, const mklib_device_info &info,
                           mklib_device_event_type type) {
     if (state->config.device_callback == nullptr || state->callback_queue == nullptr) {
@@ -210,17 +228,39 @@ void device_matching_callback(void *context, IOReturn, void *, IOHIDDeviceRef de
         return;
     }
 
+    const std::string physical_key = physical_device_key(device, kind);
     mklib_device_info info{};
+    bool added = false;
     {
         std::lock_guard<std::mutex> lock(state->mutex);
-        if (state->devices.find(device) != state->devices.end()) {
+        if (state->device_ids.find(device) != state->device_ids.end()) {
             return;
         }
-        info = make_device_info(device, state->next_device_id++, kind);
+        const auto existing = state->physical_device_ids.find(physical_key);
+        if (existing != state->physical_device_ids.end()) {
+            const auto device_iterator = state->devices.find(existing->second);
+            if (device_iterator != state->devices.end()) {
+                CFRetain(device);
+                device_iterator->second.aliases.insert(device);
+                state->device_ids.emplace(device, existing->second);
+            }
+            return;
+        }
+        const mklib_device_id id = state->next_device_id++;
+        info = make_device_info(device, id, kind);
         CFRetain(device);
-        state->devices.emplace(device, DeviceRecord{device, info});
+        DeviceRecord record{};
+        record.info = info;
+        record.aliases.insert(device);
+        record.physical_key = physical_key;
+        state->devices.emplace(id, std::move(record));
+        state->device_ids.emplace(device, id);
+        state->physical_device_ids.emplace(physical_key, id);
+        added = true;
     }
-    emit_device_callback(state, info, MKLIB_DEVICE_ADDED);
+    if (added) {
+        emit_device_callback(state, info, MKLIB_DEVICE_ADDED);
+    }
 }
 
 void copy_matching_device_callback(const void *value, void *context) {
@@ -238,15 +278,26 @@ void device_removal_callback(void *context, IOReturn, void *, IOHIDDeviceRef dev
     bool removed = false;
     {
         std::lock_guard<std::mutex> lock(state->mutex);
-        const auto iterator = state->devices.find(device);
-        if (iterator != state->devices.end()) {
+        const auto alias_iterator = state->device_ids.find(device);
+        if (alias_iterator == state->device_ids.end()) {
+            return;
+        }
+        const mklib_device_id id = alias_iterator->second;
+        state->device_ids.erase(alias_iterator);
+        const auto iterator = state->devices.find(id);
+        if (iterator == state->devices.end()) {
+            return;
+        }
+        CFRelease(device);
+        iterator->second.aliases.erase(device);
+        if (iterator->second.aliases.empty()) {
             info = iterator->second.info;
+            state->physical_device_ids.erase(iterator->second.physical_key);
             state->devices.erase(iterator);
             removed = true;
         }
     }
     if (removed) {
-        CFRelease(device);
         emit_device_callback(state, info, MKLIB_DEVICE_REMOVED);
     }
 }
@@ -283,7 +334,11 @@ void input_value_callback(void *context, IOReturn, void *, IOHIDValueRef value) 
     mklib_device_kind kind = MKLIB_DEVICE_UNKNOWN;
     {
         std::lock_guard<std::mutex> lock(state->mutex);
-        const auto iterator = state->devices.find(device);
+        const auto alias_iterator = state->device_ids.find(device);
+        if (alias_iterator == state->device_ids.end()) {
+            return;
+        }
+        const auto iterator = state->devices.find(alias_iterator->second);
         if (iterator == state->devices.end()) {
             return;
         }
@@ -487,6 +542,7 @@ mklib_status mklib_start(mklib_handle *handle) {
     };
     if ((kind_mask & MKLIB_DEVICE_MASK_KEYBOARD) != 0) {
         append_matching(kHIDPage_GenericDesktop, kHIDUsage_GD_Keyboard);
+        append_matching(kAppleInternalKeyboardUsagePage, kAppleInternalKeyboardUsage);
     }
     if ((kind_mask & (MKLIB_DEVICE_MASK_MOUSE | MKLIB_DEVICE_MASK_TOUCHPAD)) != 0) {
         append_matching(kHIDPage_GenericDesktop, kHIDUsage_GD_Mouse);
@@ -495,9 +551,7 @@ mklib_status mklib_start(mklib_handle *handle) {
         append_matching(kHIDPage_Digitizer, kHIDUsage_Dig_TouchPad);
     }
     IOHIDManagerSetDeviceMatchingMultiple(state->manager, matching);
-    if (matching != nullptr) {
-        CFRelease(matching);
-    }
+    CFRelease(matching);
 
     state->queue = dispatch_queue_create("com.mklib.hid", DISPATCH_QUEUE_SERIAL);
     if (state->config.device_callback != nullptr || state->config.event_callback != nullptr) {
@@ -577,15 +631,19 @@ mklib_status mklib_stop(mklib_handle *handle) {
         IOHIDManagerCancel(state->manager);
         dispatch_sync(state->queue, ^{
         });
-        std::unordered_map<IOHIDDeviceRef, DeviceRecord> devices;
+        std::unordered_map<mklib_device_id, DeviceRecord> devices;
         {
             std::lock_guard<std::mutex> lock(state->mutex);
             devices.swap(state->devices);
+            state->device_ids.clear();
+            state->physical_device_ids.clear();
             state->events.clear();
             state->manager_cancelled = false;
         }
         for (const auto &entry : devices) {
-            CFRelease(entry.second.device);
+            for (IOHIDDeviceRef device : entry.second.aliases) {
+                CFRelease(device);
+            }
         }
         IOHIDManagerClose(state->manager, kIOHIDOptionsTypeNone);
         CFRelease(state->manager);

@@ -2,7 +2,7 @@
 
 `mklib` 是一个面向本地多人游戏的跨平台物理输入设备库，目标是让游戏能够区分多个键盘，并将不同键盘分配给不同玩家。
 
-当前版本优先实现 macOS 后端，使用 Apple `IOHIDManager` 获取逐设备键盘事件。Windows 和 Linux 后端已完成技术路线设计，尚未进入代码实现。
+当前版本已实现 macOS `IOHIDManager` 和 Windows Raw Input 逐设备采集后端；Linux 仍为可编译占位后端。
 
 ## 解决的问题
 
@@ -25,15 +25,16 @@
 - 已实现输入监控权限查询和请求接口。
 - 已实现 C 风格 opaque handle、extern "C" ABI、ABI 版本和配置结构体版本字段，便于 C++、C#、Rust、Python 等语言绑定；正式发布仍需按版本维护 ABI 兼容性。
 - 已实现无第三方 UI 依赖的 Cocoa 双玩家 Demo。
-- Windows Raw Input 和 Linux evdev 后端尚未实现真实采集；非 macOS 构建现有可编译占位后端并返回 `MKLIB_PLATFORM_UNSUPPORTED`。
+- 已实现 `mkflappybird` 双区域键盘+鼠标 Flappy Bird Demo。
+- 已实现 Windows Raw Input 键盘/鼠标、设备热插拔、消息转发和显式窗口注册模式；Linux 仍返回 `MKLIB_PLATFORM_UNSUPPORTED`。
 - 多鼠标开发已在 `feature/multi-mouse` 分支开始，采用游戏内多个逻辑鼠标，不创建系统级虚拟鼠标。
 
 ## 构建
 
 环境要求：
 
-- macOS 10.15 或更高版本。
-- Apple Clang，Xcode Command Line Tools 即可，不要求使用 Xcode IDE。
+- macOS 10.15 或更高版本，或 Windows 10/11。
+- macOS 使用 Apple Clang；Windows 使用 Visual Studio 2022 的 MSVC；不要求使用 IDE。
 - CMake 3.25 或更高版本。
 
 ```bash
@@ -47,12 +48,15 @@ Demo 位于：
 ```text
 build/mklib_demo.app
 build/mklib_mouse_demo.app
+build/mkflappybird.app
 ```
 
 建议直接启动 App，而不是长期从命令行启动：
 
 ```bash
 open build/mklib_demo.app
+open build/mklib_mouse_demo.app
+open build/mkflappybird.app
 ```
 
 ## Demo 用法
@@ -60,7 +64,7 @@ open build/mklib_demo.app
 首次启动时，macOS 可能要求输入监控权限。请打开：
 
 ```text
-系统设置 → 隐私与安全性 → 输入监控 → mklib Demo
+系统设置 → 隐私与安全性 → 输入监控 → 当前启动的 Demo（mklib Demo、mklib Mouse Demo 或 mkflappybird）
 ```
 
 Demo 中：
@@ -72,6 +76,20 @@ Demo 中：
 - 页面上会显示当前发现的键盘、设备 ID、厂商、传输方式和 VID/PID。
 
 设备 ID 只保证当前连接期间有效。键盘断开后重新连接，可能得到新的 ID；如果两个键盘型号完全相同且没有序列号，Demo 使用按键绑定来消除识别歧义。
+
+### mkflappybird Demo
+
+`build/mkflappybird.app` 是双区域键盘+鼠标 Flappy Bird Demo：
+
+- 启动后进入主页，固定左右两个区域，按 `Enter` 进入绑定；
+- 左区域：一台键盘按数字键 `1` 绑定，再用一只鼠标按左键绑定；
+- 右区域：另一台键盘按数字键 `2` 绑定，再用另一只鼠标按右键绑定；同一设备不能绑定多个区域；
+- 四个设备都绑定后自动倒计时 3 秒；
+- 游戏中，绑定键盘按 `Space` 控制对应小鸟飞行，绑定鼠标按键发射水平子弹；
+- 子弹每 0.5 秒最多发射一次，速度为障碍物移动速度的 3 倍；
+- 子弹击中随机出现的礼物后，该礼物消失并为对应区域加 1 分；
+- 小鸟撞到管道、边界或未消失的子弹时，该区域结束，其他区域继续；
+- 全部区域结束后按 `Enter` 回到大厅重新开始。
 
 ### 多鼠标 Demo
 
@@ -108,7 +126,8 @@ if (mklib_start(input) != MKLIB_OK) {
 mklib_event event{};
 while (mklib_poll_event(input, &event, 16) == MKLIB_OK) {
     if (event.type == MKLIB_KEY_DOWN) {
-        // event.device_id 是物理键盘 ID，event.usage 是 HID 用途码
+        (void)event.device_id;
+        (void)event.usage;
     }
 }
 
@@ -136,7 +155,9 @@ mklib_destroy(&input);
 
 ### Windows
 
-使用 Raw Input 和 `WM_INPUT`，通过 `hDevice` 区分物理键盘。通常不需要管理员权限。由于一个进程内同一 Raw Input 类别只能注册到一个窗口，Windows 后端需要同时支持宿主窗口接入和原始消息转发，避免与游戏引擎冲突。
+使用 Raw Input 和 `WM_INPUT`，通过 `RAWINPUTHEADER.hDevice` 区分物理键盘和鼠标。Windows 窗口接入 API 与其他公共 API 一样声明在 `include/mklib/mklib.h` 中。宿主默认自行调用 `RegisterRawInputDevices`，在窗口过程把 `WM_INPUT` 和 `WM_INPUT_DEVICE_CHANGE` 转发到 `mklib_windows_process_message`；如果没有现成注册，也可以显式使用 `MKLIB_WINDOWS_ATTACH_REGISTER_RAW_INPUT`。库不创建隐藏窗口、不覆盖已有引擎注册、不注入系统输入。
+
+窗口句柄必须覆盖 `attach` 到 `stop` 的整个生命周期，窗口销毁后先停止并分离句柄。`WM_INPUT` 处理后宿主仍按框架要求调用 `DefWindowProc`。失焦时转发 `WM_KILLFOCUS`/`WM_ACTIVATEAPP` 或调用 `mklib_windows_reset_input_state`。Windows 通常不需要管理员权限，也没有需要由 mklib 请求的系统级输入权限；远程桌面、受限桌面和驱动限制可能影响设备可见性。
 
 ### Linux
 
@@ -172,19 +193,28 @@ mklib_destroy(&input);
 ## 目录结构
 
 ```text
-include/mklib/mklib.h    公共 C ABI
-src/mklib.cpp             macOS IOHIDManager 后端
-demo/main.mm              Cocoa 双玩家 Demo
-tests/test_api.cpp        基础 API 测试
-docs/api.md              二次开发 API、生命周期和线程契约
- docs/platform-backends.md 跨平台后端开发约定
- docs/development.md      调研与开发文档
-CMakeLists.txt            构建配置与安装包
+include/mklib/mklib.h                                  公共 C ABI 和 Windows 窗口消息 API
+src/platform/macos/macos_backend.cpp                   macOS IOHIDManager 后端
+src/platform/windows/                                   Windows Raw Input 后端
+src/platform/unsupported/unsupported_backend.cpp       其他平台占位后端
+demo/macos/mklib_demo/main.mm                          Cocoa 双玩家 Demo
+demo/macos/mklib_demo/Info.plist                       双玩家 Bundle 配置
+demo/macos/mklib_mouse_demo/mouse_main.mm              Cocoa 多鼠标 Demo
+demo/macos/mklib_mouse_demo/MouseInfo.plist            多鼠标 Bundle 配置
+demo/macos/mkflappybird/main.mm                        Cocoa 双区域键盘+鼠标 Flappy Bird Demo
+demo/macos/mkflappybird/Info.plist                     Flappy Bird Bundle 配置
+demo/macos/mkflappybird/assets/sky_background.png      Flappy Bird 背景素材
+tests/test_api.cpp                                      公共 API 测试
+tests/test_windows_normalizer.cpp                      Windows 规范化测试
+docs/api.md                                             二次开发 API、生命周期和线程契约
+docs/platform-backends.md                               跨平台后端开发约定
+docs/development.md                                     调研与开发文档
+CMakeLists.txt                                          构建配置与安装包
 ```
 
 ## 二次开发与安装
 
-详细接入契约见 [`docs/api.md`](docs/api.md)，Windows/Linux 后端目录和实现约束见 [`docs/platform-backends.md`](docs/platform-backends.md)。
+详细接入契约见 [`docs/api.md`](docs/api.md)，各平台后端目录和实现约束见 [`docs/platform-backends.md`](docs/platform-backends.md)。
 
 构建共享库并安装 CMake package：
 

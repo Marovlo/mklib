@@ -137,6 +137,24 @@ MKLIB_API mklib_status mklib_poll_event(mklib_handle *handle,
 MKLIB_API mklib_status mklib_get_dropped_event_count(const mklib_handle *handle,
                                                     uint64_t *out_count);
 
+#if defined(_WIN32)
+typedef uintptr_t mklib_windows_window_handle;
+
+enum {
+    MKLIB_WINDOWS_ATTACH_REGISTER_RAW_INPUT = 1u,
+    MKLIB_WINDOWS_ATTACH_INPUT_SINK = 2u
+};
+
+MKLIB_API mklib_status mklib_windows_attach_window(
+    mklib_handle *handle, mklib_windows_window_handle window_handle,
+    uint32_t flags);
+MKLIB_API mklib_status mklib_windows_detach_window(mklib_handle *handle);
+MKLIB_API mklib_status mklib_windows_process_message(
+    mklib_handle *handle, uint32_t message, uintptr_t wparam, intptr_t lparam,
+    bool *out_handled);
+MKLIB_API mklib_status mklib_windows_reset_input_state(mklib_handle *handle);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

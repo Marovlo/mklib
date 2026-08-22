@@ -193,27 +193,20 @@ Demo 包含 `NSInputMonitoringUsageDescription`，并在没有权限时显示系
 使用 Windows Raw Input：
 
 ```text
-RegisterRawInputDevices
-        ↓
-WM_INPUT
-        ↓
+宿主窗口过程
+    ↓ WM_INPUT / WM_INPUT_DEVICE_CHANGE
+mklib_windows_process_message
+    ↓
 RAWINPUTHEADER.hDevice
-        ↓
-设备元数据和键盘事件
+    ↓
+设备元数据、规范化事件和有界队列
 ```
 
-Raw Input 可以区分同类型的多个设备，通常不需要管理员权限。
+当前实现位于 `src/platform/windows/raw_input_backend.cpp`，规范化层位于 `src/platform/windows/raw_input_normalizer.cpp`。它支持键盘扫描码（含 E0/E1 扩展键）、鼠标按钮和相对 X/Y 移动，并使用 `GetRawInputDeviceInfo`、SetupAPI 查询设备路径、VID/PID、厂商、产品和可用实例信息。
 
-重要集成限制：同一个进程内，每种 Raw Input 设备类别只能注册到一个窗口。`RegisterRawInputDevices` 不应由库无条件调用，因为可能覆盖宿主游戏或引擎的 Raw Input 注册。
+Raw Input 可以区分同类型的多个设备，通常不需要管理员权限。窗口句柄是宿主资源，必须在 attach、消息转发、start 和 stop 完成前保持有效；窗口销毁或失焦时要停止转发并清理输入状态。设备断开、失焦和 stop 只清理库内部按下集合，不伪造释放事件，游戏仍应清理自己的动作状态。
 
-Windows 后端应提供两种接入模式：
-
-```text
-宿主窗口模式：mklib 接收宿主窗口的 WM_INPUT
-转发模式：游戏自己读取 WM_INPUT，再调用 mklib_feed_raw_input
-```
-
-实现 Windows 后端前，需要先设计窗口消息生命周期、Raw Input 注册协商和设备到 mklib ID 的映射。
+同一进程内每种 Raw Input 类别通常只能注册到一个窗口。宿主默认自己负责 `RegisterRawInputDevices` 并转发消息；只有显式指定 `MKLIB_WINDOWS_ATTACH_REGISTER_RAW_INPUT` 时，库才为指定窗口注册，并只撤销自己建立的注册。宿主仍拥有 `WM_INPUT` 的最终处理权，调用库后按窗口框架要求调用 `DefWindowProc`。实现不创建虚拟设备、不注入系统输入，也不绕过 Windows 权限。
 
 ## 6. Linux 方案
 
@@ -320,7 +313,7 @@ Demo 的鼠标捕获行为：
 - 增加按键释放状态清理测试。
 - 将用户回调与 HID 采集队列解耦。（已完成：回调使用独立串行队列。）
 - 增加设备元数据和事件吞吐性能基准。
-- 开始 Windows Raw Input 后端设计。（已完成目录和统一语义占位，真实采集待实现。）
+- Windows Raw Input 后端已实现：宿主消息转发、显式窗口注册、键盘/鼠标规范化、热插拔、设备元数据和状态清理。
 - 开始 Linux evdev 后端设计。（已完成目录和统一语义占位，真实采集待实现。）
 - 详细二次开发契约见 `docs/api.md`，跨平台约束见 `docs/platform-backends.md`。
 
