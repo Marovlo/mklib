@@ -37,6 +37,15 @@ int main() {
     assert(mouse_events[3].usage == 0x31);
     assert(mouse_events[3].value == 7);
 
+    const size_t wheel_count = mklib_windows::normalize_mouse(
+        0, mklib_windows::kMouseWheel, -120, 0, 0, mouse_events,
+        mklib_windows::kMaxNormalizedEvents);
+    assert(wheel_count == 1);
+    assert(mouse_events[0].type == MKLIB_MOUSE_WHEEL);
+    assert(mouse_events[0].usage_page == 0x01);
+    assert(mouse_events[0].usage == 0x38);
+    assert(mouse_events[0].value == -120);
+
     assert(mklib_windows::normalize_mouse(
         mklib_windows::kMouseMoveAbsolute, 0, 0, 1, 1, mouse_events,
         mklib_windows::kMaxNormalizedEvents) == 0);

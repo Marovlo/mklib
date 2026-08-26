@@ -68,7 +68,8 @@ typedef enum mklib_input_event_type {
     MKLIB_KEY_UP = 2,
     MKLIB_MOUSE_BUTTON_DOWN = 3,
     MKLIB_MOUSE_BUTTON_UP = 4,
-    MKLIB_MOUSE_MOVE = 5
+    MKLIB_MOUSE_MOVE = 5,
+    MKLIB_MOUSE_WHEEL = 6
 } mklib_input_event_type;
 
 typedef struct mklib_device_info {

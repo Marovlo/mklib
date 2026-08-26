@@ -22,6 +22,7 @@ constexpr uint16_t kMouseButton4Down = 0x0040u;
 constexpr uint16_t kMouseButton4Up = 0x0080u;
 constexpr uint16_t kMouseButton5Down = 0x0100u;
 constexpr uint16_t kMouseButton5Up = 0x0200u;
+constexpr uint16_t kMouseWheel = 0x0400u;
 constexpr size_t kMaxNormalizedEvents = 8;
 
 struct normalized_event {
