@@ -163,6 +163,7 @@ while (mklib_poll_event(handle, &event, 16) == MKLIB_OK) {
 
 - `MKLIB_MOUSE_BUTTON_DOWN/UP`：Button Usage Page，`usage` 通常为 1 左键、2 右键、3 中键；
 - `MKLIB_MOUSE_MOVE`：Generic Desktop Usage Page，`usage` 为 0x30 X 或 0x31 Y，`value` 为相对增量；
+- `MKLIB_MOUSE_WHEEL`：Generic Desktop Usage Page，`usage` 为 0x38 Wheel，`value` 为滚轮增量；
 - 当前不承诺绝对触摸坐标、多点触摸、手势和系统级多光标。
 
 ## 7. 设备回调与释放状态

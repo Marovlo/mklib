@@ -358,7 +358,16 @@ void input_value_callback(void *context, IOReturn, void *, IOHIDValueRef value) 
     } else if ((kind == MKLIB_DEVICE_MOUSE || kind == MKLIB_DEVICE_TOUCHPAD) &&
                usage_page == kGenericDesktopUsagePage &&
                (usage == kHIDUsage_GD_X || usage == kHIDUsage_GD_Y)) {
+        if (value_number == 0) {
+            return;
+        }
         event.type = MKLIB_MOUSE_MOVE;
+    } else if ((kind == MKLIB_DEVICE_MOUSE || kind == MKLIB_DEVICE_TOUCHPAD) &&
+               usage_page == kGenericDesktopUsagePage && usage == kHIDUsage_GD_Wheel) {
+        if (value_number == 0) {
+            return;
+        }
+        event.type = MKLIB_MOUSE_WHEEL;
     } else {
         return;
     }

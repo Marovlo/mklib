@@ -21,6 +21,7 @@
 - 已实现 macOS 键盘设备枚举。
 - 已实现 macOS 键盘热插拔通知。
 - 已实现按物理键盘区分的按键按下和释放事件。
+- 已实现 macOS 鼠标按钮、相对移动和滚轮 HID 事件；滚轮使用 Generic Desktop Wheel usage（0x38），相对位移和滚轮的零值报告会被过滤。
 - 已实现设备元数据：VID、PID、厂商、产品、传输方式、序列号和位置 ID。
 - 已实现输入监控权限查询和请求接口。
 - 已实现 C 风格 opaque handle、extern "C" ABI、ABI 版本和配置结构体版本字段，便于 C++、C#、Rust、Python 等语言绑定；正式发布仍需按版本维护 ABI 兼容性。
@@ -42,6 +43,14 @@ cmake -S . -B build -DMKLIB_BUILD_DEMO=ON -DMKLIB_BUILD_TESTS=ON
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
+
+macOS 可单独测量 mklib HID 采集层（不启动 Godot）：
+
+```bash
+./build/mklib_hid_benchmark 10
+```
+
+程序会输出设备数、事件类型计数、丢弃事件数，以及基于 `getrusage` 的进程 CPU 占用。静止测试期间不要移动鼠标；第二次测试时在同一窗口内持续移动鼠标或滚动滚轮，对比 `cpu_percent` 和事件计数。
 
 Demo 位于 macOS 构建目录的 App Bundle 中；Windows 构建目录的 Debug/Release 子目录中：
 
@@ -223,6 +232,7 @@ demo/windows/mklib_mouse_demo.cpp                       Windows 多鼠标 Demo
 demo/windows/mkflappybird.cpp                           Windows 双区域键盘+鼠标 Flappy Bird Demo
 tests/test_api.cpp                                      公共 API 测试
 tests/test_windows_normalizer.cpp                      Windows 规范化测试
+tests/hid_benchmark.cpp                                 macOS HID CPU/事件基准工具
 docs/api.md                                             二次开发 API、生命周期和线程契约
 docs/platform-backends.md                               跨平台后端开发约定
 docs/development.md                                     调研与开发文档

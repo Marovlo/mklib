@@ -1,4 +1,6 @@
 build/
+build-current/
+build-release/
 build-win*/
 .DS_Store
 compile_commands.json
