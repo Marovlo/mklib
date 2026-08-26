@@ -163,7 +163,7 @@ bool normalize_keyboard(uint16_t make_code, uint16_t flags, normalized_event *ou
     return true;
 }
 
-size_t normalize_mouse(uint16_t flags, uint16_t button_flags, int16_t,
+size_t normalize_mouse(uint16_t flags, uint16_t button_flags, int16_t button_data,
                        int32_t last_x, int32_t last_y,
                        normalized_event *out_events, size_t capacity) {
     if (out_events == nullptr || capacity == 0 || (flags & kMouseMoveAbsolute) != 0) {
@@ -192,6 +192,13 @@ size_t normalize_mouse(uint16_t flags, uint16_t button_flags, int16_t,
         out_events[count].usage_page = 0x01;
         out_events[count].usage = 0x31;
         out_events[count].value = last_y;
+        ++count;
+    }
+    if (button_data != 0 && count < capacity) {
+        out_events[count].type = MKLIB_MOUSE_WHEEL;
+        out_events[count].usage_page = 0x01;
+        out_events[count].usage = 0x38;
+        out_events[count].value = button_data;
         ++count;
     }
     return count;

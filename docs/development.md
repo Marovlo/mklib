@@ -280,7 +280,8 @@ macOS 的 TCC 权限、Linux 的设备节点权限、Windows 的 Raw Input 注�
 - `mklib_device_kind`：区分键盘、鼠标和触摸板；
 - `mklib_config.device_kind_mask`：选择本次句柄监听的设备类别，0 保持原有键盘默认行为；
 - `MKLIB_MOUSE_BUTTON_DOWN/UP`：鼠标按钮事件；
-- `MKLIB_MOUSE_MOVE`：相对 X/Y 移动事件，轴由 `usage` 表示，增量由 `value` 表示。
+- `MKLIB_MOUSE_MOVE`：相对 X/Y 移动事件，轴由 `usage` 表示，增量由 `value` 表示；
+- `MKLIB_MOUSE_WHEEL`：滚轮事件，使用 Generic Desktop Wheel usage `0x38`。
 
 `build/mklib_mouse_demo.app` 当前暂时限定为两个独立物理鼠标：用鼠标按钮绑定两个玩家，用 Tab 交换控制，并用相对 X/Y 移动控制两个逻辑小球。当前 MacBook 触摸板虽然可能被系统指针使用，但没有向本项目的 `IOHIDManager` 事件链路提供可用的按钮/移动事件，因此暂不纳入 Demo 控制。库层保留触摸板分类和兼容代码，后续再研究 macOS 专用触控板接口；本阶段不承诺多点触摸、绝对坐标、手势或所有内置触摸板。
 

@@ -186,6 +186,12 @@ if(MKLIB_BUILD_TESTS)
         $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall;-Wextra;-Wpedantic>
     )
     add_test(NAME mklib_windows_normalization COMMAND mklib_windows_normalization_tests)
+    if(APPLE)
+        add_executable(mklib_hid_benchmark tests/hid_benchmark.cpp)
+        target_include_directories(mklib_hid_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_compile_options(mklib_hid_benchmark PRIVATE -Wall -Wextra -Wpedantic)
+        target_link_libraries(mklib_hid_benchmark PRIVATE mklib::mklib)
+    endif()
 endif()
 
 include(GNUInstallDirs)

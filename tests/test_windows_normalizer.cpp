@@ -38,6 +38,14 @@ int main() {
     assert(mouse_events[3].value == 7);
 
     assert(mklib_windows::normalize_mouse(
+        0, 0, 120, 0, 0, mouse_events,
+        mklib_windows::kMaxNormalizedEvents) == 1);
+    assert(mouse_events[0].type == MKLIB_MOUSE_WHEEL);
+    assert(mouse_events[0].usage_page == 0x01);
+    assert(mouse_events[0].usage == 0x38);
+    assert(mouse_events[0].value == 120);
+
+    assert(mklib_windows::normalize_mouse(
         mklib_windows::kMouseMoveAbsolute, 0, 0, 1, 1, mouse_events,
         mklib_windows::kMaxNormalizedEvents) == 0);
     return 0;
